@@ -20,6 +20,7 @@ class OutboxRepository:
             .where(Outbox.status == OutboxStatus.pending)
             .order_by(Outbox.created_at)
             .limit(limit)
+            .with_for_update(skip_locked=True)
         )
         return list(result.scalars().all())
 
@@ -33,3 +34,10 @@ class OutboxRepository:
         outbox = await self.session.get(Outbox, outbox_id)
         if outbox:
             outbox.status = OutboxStatus.failed
+
+    async def increment_retry(self, outbox_id: UUID, max_retries: int) -> None:
+        outbox = await self.session.get(Outbox, outbox_id)
+        if outbox:
+            outbox.retry_count += 1
+            if outbox.retry_count >= max_retries:
+                outbox.status = OutboxStatus.failed
