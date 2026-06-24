@@ -5,10 +5,11 @@ FastAPI + PostgreSQL + RabbitMQ (FastStream). Принимает платежи,
 ## Запуск
 
 ```bash
+cp .env.example .env
 docker compose up --build
 ```
 
-API: `http://localhost:8000` · RabbitMQ UI: `http://localhost:15672` (guest/guest)
+API: `http://localhost:8000` · Swagger UI: `http://localhost:8000/docs` · RabbitMQ UI: `http://localhost:15672` (guest/guest)
 
 Миграции применяются автоматически. Переменные окружения берутся из `.env`.
 
