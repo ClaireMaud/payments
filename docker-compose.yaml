@@ -42,3 +42,13 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+
+  consumer:
+    build: .
+    entrypoint: ["python", "-m", "app.workers.consumer"]
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
