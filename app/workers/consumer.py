@@ -6,12 +6,22 @@ from uuid import UUID
 
 import httpx
 from faststream import FastStream
-from tenacity import retry, stop_after_attempt, wait_exponential
+from tenacity import (
+    before_sleep_log,
+    retry,
+    stop_after_attempt,
+    wait_exponential,
+)
 
 from app.broker import broker
 from app.db.session import async_session_factory
 from app.models.payment import PaymentStatus
-from app.queues import payments_exchange, payments_queue
+from app.queues import (
+    dlq_exchange,
+    dlq_queue,
+    payments_exchange,
+    payments_queue,
+)
 from app.repositories.payment import PaymentRepository
 
 logger = logging.getLogger(__name__)
@@ -23,16 +33,37 @@ GATEWAY_MIN_DELAY = 2
 GATEWAY_MAX_DELAY = 5
 
 
+@broker.subscriber(dlq_queue, exchange=dlq_exchange)
+async def handle_dead_letter(payload: dict) -> None:
+    logger.error(f"Dead letter received: {payload}")
+
+
 @broker.subscriber(payments_queue, exchange=payments_exchange)
 async def handle_payment(payload: dict) -> None:
     payment_id = UUID(payload["payment_id"])
 
+    webhook_url, status = await _process_payment(payment_id)
+
+    try:
+        await _send_webhook(webhook_url, str(payment_id), status)
+    except Exception:
+        logger.error(
+            f"Webhook failed for payment {payment_id} after all retries"
+        )
+
+
+@retry(
+    stop=stop_after_attempt(3),
+    wait=wait_exponential(min=1, max=8),
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
+)
+async def _process_payment(payment_id: UUID) -> tuple[str, PaymentStatus]:
     async with async_session_factory() as session:
         repo = PaymentRepository(session)
         payment = await repo.get_by_id(payment_id)
         if not payment:
-            logger.error(f"Payment {payment_id} not found")
-            return
+            raise ValueError(f"Payment {payment_id} not found")
 
         delay = random.uniform(GATEWAY_MIN_DELAY, GATEWAY_MAX_DELAY)
         await asyncio.sleep(delay)
@@ -45,20 +76,14 @@ async def handle_payment(payload: dict) -> None:
         payment.processed_at = datetime.now(timezone.utc)
         await session.commit()
 
-    try:
-        await _send_webhook(
-            payment.webhook_url, str(payment_id), payment.status
-        )
-    except Exception:
-        logger.error(
-            f"Webhook failed for payment {payment_id} after all retries"
-        )
+        return payment.webhook_url, payment.status
 
 
 @retry(
     stop=stop_after_attempt(3),
     wait=wait_exponential(min=1, max=8),
-    reraise=False,
+    before_sleep=before_sleep_log(logger, logging.WARNING),
+    reraise=True,
 )
 async def _send_webhook(
     webhook_url: str, payment_id: str, status: PaymentStatus
