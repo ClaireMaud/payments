@@ -10,11 +10,8 @@ class PaymentRepository:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def create(self, payment: Payment) -> Payment:
+    def create(self, payment: Payment) -> None:
         self.session.add(payment)
-        await self.session.commit()
-        await self.session.refresh(payment)
-        return payment
 
     async def get_by_id(self, payment_id: UUID) -> Payment | None:
         result = await self.session.execute(

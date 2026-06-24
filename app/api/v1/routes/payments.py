@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_async_session
 from app.dependecies import verify_api_key
 from app.models.payment import Payment
+from app.outbox.publisher import enqueue_event
 from app.repositories.payment import PaymentRepository
 from app.schemas.payment import (
     PaymentCreate,
@@ -45,7 +46,12 @@ async def create_payment(
         idempotency_key=idempotency_key,
         webhook_url=str(body.webhook_url),
     )
-    payment = await repo.create(payment)
+    repo.create(payment)
+    await session.flush()
+
+    enqueue_event(session, "payment.created", {"payment_id": str(payment.id)})
+    await session.commit()
+    await session.refresh(payment)
 
     return PaymentCreatedResponse(
         payment_id=payment.id,
